@@ -45,11 +45,12 @@
         </fieldset>
         <fieldset>
           <legend>AI</legend>
-          <input id="aiApiKey" placeholder="OpenAI API Key (optional)" />
-          <input id="aiProxyUrl" placeholder="AI Proxy URL (optional)" />
+          <input id="aiApiKey" type="password" placeholder="OpenAI API Key (optional)" autocomplete="off" />
+          <input id="aiProxyUrl" type="url" placeholder="AI Proxy URL (https://... or mock:)" />
           <input id="aiModel" placeholder="Model (e.g., gpt-4o-mini)" />
         </fieldset>
         <menu>
+          <button id="resetSettings" value="reset" type="button">Reset</button>
           <button value="cancel">Cancel</button>
           <button id="saveSettings" value="default">Save</button>
         </menu>
