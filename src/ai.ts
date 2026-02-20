@@ -1,6 +1,8 @@
 import { loadEnv } from './config';
 
-export async function askAI(messages: Array<{ role: string; content: string }>): Promise<string> {
+type Msg = { role: string; content: string };
+
+export async function askAI(messages: Msg[], opts?: { system?: string }): Promise<string> {
   const { AI_API_KEY, AI_PROXY_URL, AI_MODEL } = loadEnv();
   const isMock = (AI_MODEL || '').toLowerCase() === 'mock' || (AI_PROXY_URL || '').toLowerCase().startsWith('mock');
   if (isMock) {
@@ -9,7 +11,10 @@ export async function askAI(messages: Array<{ role: string; content: string }>):
     await new Promise(r => setTimeout(r, 150));
     return `【mock】${prompt ? `You said: "${prompt}"` : 'Ready. Ask me something.'}`;
   }
-  const body = { model: AI_MODEL || 'gpt-4o-mini', messages };
+  const payload: Msg[] = [];
+  if (opts?.system) payload.push({ role: 'system', content: opts.system });
+  payload.push(...messages);
+  const body = { model: AI_MODEL || 'gpt-4o-mini', messages: payload };
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   let url = (AI_PROXY_URL || '').trim();
   if (url) {
@@ -30,8 +35,8 @@ export async function askAI(messages: Array<{ role: string; content: string }>):
 }
 
 export async function askAIStream(
-  messages: Array<{ role: string; content: string }>,
-  { onDelta }: { onDelta?: (delta: string) => void } = {}
+  messages: Msg[],
+  { onDelta, system }: { onDelta?: (delta: string) => void; system?: string } = {}
 ): Promise<string> {
   const { AI_API_KEY, AI_PROXY_URL, AI_MODEL } = loadEnv();
   const isMock = (AI_MODEL || '').toLowerCase() === 'mock' || (AI_PROXY_URL || '').toLowerCase().startsWith('mock');
@@ -45,7 +50,10 @@ export async function askAIStream(
   }
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   let url = (AI_PROXY_URL || '').trim();
-  const body = { model: AI_MODEL || 'gpt-4o-mini', messages, stream: true };
+  const payload: Msg[] = [];
+  if (system) payload.push({ role: 'system', content: system });
+  payload.push(...messages);
+  const body = { model: AI_MODEL || 'gpt-4o-mini', messages: payload, stream: true };
   if (!url) { if (!AI_API_KEY) throw new Error('Provide AI API key or proxy URL in Settings'); url = 'https://api.openai.com/v1/chat/completions'; headers['Authorization'] = `Bearer ${AI_API_KEY}`; }
   const res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
   if (!res.ok || !res.body) return askAI(messages);

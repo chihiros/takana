@@ -2,6 +2,7 @@ import { loadEnv, saveSettings } from './config';
 import { joinP2PRoom } from './p2p';
 import { getMessages, addMessage, addMessages } from './storage';
 import { renderMarkdown } from './markdown';
+import { getDefaultPrompt } from './prompts';
 
 const els = {
   settingsBtn: document.getElementById('settingsBtn') as HTMLButtonElement,
@@ -158,10 +159,10 @@ els.joinRoom.addEventListener('click', async () => {
         const aiTs = Date.now(); let full = '';
         try {
           const { askAIStream } = await import('./ai');
-          full = await askAIStream(history, { onDelta(delta) { full += delta; (span as HTMLElement).innerText = full; els.chat.scrollTop = els.chat.scrollHeight; } });
+          full = await askAIStream(history, { onDelta(delta) { full += delta; (span as HTMLElement).innerText = full; els.chat.scrollTop = els.chat.scrollHeight; }, system: getDefaultPrompt()?.body });
         } catch {
           const { askAI } = await import('./ai');
-          full = await askAI(history); (span as HTMLElement).innerText = full; els.chat.scrollTop = els.chat.scrollHeight;
+          full = await askAI(history, { system: getDefaultPrompt()?.body }); (span as HTMLElement).innerText = full; els.chat.scrollTop = els.chat.scrollHeight;
         }
         (span as HTMLElement).innerHTML = renderMarkdown(full);
         markSeen({ role: 'assistant', author: 'AI', ts: aiTs, content: full });
@@ -169,6 +170,14 @@ els.joinRoom.addEventListener('click', async () => {
       } finally {
         els.askAiBtn.disabled = false; if (els.sendBtn) els.sendBtn.disabled = false;
       }
+    }
+    // 初回キックオフ: 履歴が空なら自動でプランニング開始
+    const initial = await getMessages(roomId);
+    if (!initial || initial.length === 0) {
+      // 軽いトースト代わりにステータス表示
+      els.roomStatus.textContent = `Joined (P2P): ${roomId} — planning...`;
+      // 即座にAIにプランニングを開始してもらう（ユーザー発話なし）
+      runAskAI('');
     }
     // Join 完了後はボタン無効化（重複Joinでの重複表示防止）
     els.joinRoom.disabled = true;
