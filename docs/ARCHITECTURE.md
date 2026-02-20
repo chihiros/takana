@@ -7,10 +7,10 @@
 
 ## Modules
 - `index.html`: UI shell, settings dialog.
-- `src/config.js`: load/save settings from `localStorage` and `window.__ENV`.
-- `src/p2p.js`: WebRTC P2P room, presence and chat sync via trackers; optional E2E.
-- `src/storage.js`: IndexedDB storage for messages (per room, last ~200 entries).
-- `src/ai.js`: OpenAI-compatible request wrapper.
+- `src/config.ts`: load/save settings from `localStorage` and Vite env (`import.meta.env`).
+- `src/p2p.ts`: WebRTC P2P room, presence and chat sync via trackers; optional E2E.
+- `src/storage.ts`: IndexedDB storage for messages (per room, last ~200 entries).
+- `src/ai.ts`: OpenAI-compatible request wrapper with optional streaming.
 
 ## Data Model
 - P2P: in-memory only; peers share last N messages/presence on connect. Client stores last ~200 messages per room in IndexedDB.

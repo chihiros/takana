@@ -1,27 +1,27 @@
-.PHONY: help vendor run clean
+.PHONY: help setup run build preview clean
 
 help:
 	@echo "Common targets:"
-	@echo "  make vendor   - Download UMD p2pt to public/p2pt.min.js"
-	@echo "  make run      - Serve static site on http://localhost:5173"
-	@echo "  make clean    - Remove vendored assets"
+	@echo "  make setup    - Install npm dependencies"
+	@echo "  make run      - Start Vite dev server"
+	@echo "  make build    - Build production bundle"
+	@echo "  make preview  - Preview built files"
+	@echo "  make clean    - Remove node_modules and dist"
 
-vendor:
-	@mkdir -p public
-	@echo "Fetching p2pt UMD..."
-	@if command -v curl >/dev/null 2>&1; then \
-		curl -fL https://cdn.jsdelivr.net/npm/p2pt@1/dist/p2pt.min.js -o public/p2pt.min.js; \
-	elif command -v wget >/dev/null 2>&1; then \
-		wget -O public/p2pt.min.js https://cdn.jsdelivr.net/npm/p2pt@1/dist/p2pt.min.js; \
-	else \
-		echo "Please install curl or wget" && exit 1; \
-	fi
-	@echo "Saved to public/p2pt.min.js"
+setup:
+	@echo "Installing dependencies..."
+	@npm ci || npm install
 
 run:
-	@echo "Serving at http://localhost:5173"
-	python3 -m http.server -d . 5173
+	@echo "Dev server at http://localhost:5173"
+	@npm run dev
+
+build:
+	@npm run build
+
+preview:
+	@npm run preview
 
 clean:
-	@rm -f public/p2pt.min.js
-	@echo "Cleaned vendored assets"
+	@rm -rf node_modules dist
+	@echo "Cleaned build artifacts"
