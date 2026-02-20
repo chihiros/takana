@@ -1,6 +1,7 @@
 import { loadEnv, saveSettings } from './config';
 import { joinP2PRoom } from './p2p';
 import { getMessages, addMessage, addMessages } from './storage';
+import { renderMarkdown } from './markdown';
 
 const els = {
   settingsBtn: document.getElementById('settingsBtn') as HTMLButtonElement,
@@ -106,8 +107,24 @@ els.joinRoom.addEventListener('click', async () => {
       if (!Array.isArray(items)) items = [items];
       const filtered = (items as any[]).filter(m => { const k = msgKey(m); if (seen.has(k)) return false; seen.add(k); return true; });
       if (!filtered.length) return;
-      const html = filtered.map(m => `<div class="msg ${m.role === 'assistant' ? 'ai' : m.role === 'user' ? 'me' : ''}"><strong>${escapeHtml(m.author || m.role)}</strong>: ${escapeHtml(m.content || '')}</div>`).join('');
-      els.chat.insertAdjacentHTML('beforeend', html); els.chat.scrollTop = els.chat.scrollHeight;
+      for (const m of filtered) {
+        const wrap = document.createElement('div');
+        wrap.className = `msg ${m.role === 'assistant' ? 'ai' : m.role === 'user' ? 'me' : ''}`;
+        const head = document.createElement('div'); head.className = 'msg-head';
+        const who = document.createElement('strong'); who.textContent = String(m.author || m.role || '');
+        head.appendChild(who);
+        const body = document.createElement('div');
+        body.className = `msg-content${m.role === 'assistant' ? ' prose' : ''}`;
+        const content = String(m.content || '');
+        if (m.role === 'assistant') {
+          body.innerHTML = renderMarkdown(content);
+        } else {
+          body.textContent = content;
+        }
+        wrap.appendChild(head); wrap.appendChild(body);
+        els.chat.appendChild(wrap);
+      }
+      els.chat.scrollTop = els.chat.scrollHeight;
     }
 
     els.composer.addEventListener('submit', async (e) => {
@@ -132,20 +149,21 @@ els.joinRoom.addEventListener('click', async () => {
         const history = (await getMessages(roomId)).map((m: any) => ({ role: m.role || 'user', content: m.content || '' }));
         if (optionalTyped && (history.length === 0 || history[history.length - 1].role !== 'user')) history.push({ role: 'user', content: optionalTyped });
         const msgEl = document.createElement('div'); msgEl.className = 'msg ai';
-        const strong = document.createElement('strong'); strong.textContent = 'AI';
-        const sep = document.createTextNode(': ');
-        const span = document.createElement('span');
-        msgEl.appendChild(strong); msgEl.appendChild(sep); msgEl.appendChild(span);
+        const head = document.createElement('div'); head.className = 'msg-head';
+        const strong = document.createElement('strong'); strong.textContent = 'AI'; head.appendChild(strong);
+        const span = document.createElement('div'); span.className = 'msg-content prose';
+        msgEl.appendChild(head); msgEl.appendChild(span);
         els.chat.appendChild(msgEl); els.chat.scrollTop = els.chat.scrollHeight;
 
         const aiTs = Date.now(); let full = '';
         try {
           const { askAIStream } = await import('./ai');
-          full = await askAIStream(history, { onDelta(delta) { full += delta; span.textContent = full; els.chat.scrollTop = els.chat.scrollHeight; } });
+          full = await askAIStream(history, { onDelta(delta) { full += delta; (span as HTMLElement).innerText = full; els.chat.scrollTop = els.chat.scrollHeight; } });
         } catch {
           const { askAI } = await import('./ai');
-          full = await askAI(history); span.textContent = full; els.chat.scrollTop = els.chat.scrollHeight;
+          full = await askAI(history); (span as HTMLElement).innerText = full; els.chat.scrollTop = els.chat.scrollHeight;
         }
+        (span as HTMLElement).innerHTML = renderMarkdown(full);
         markSeen({ role: 'assistant', author: 'AI', ts: aiTs, content: full });
         p2p.sendMessage({ role: 'assistant', content: full, author: 'AI', ts: aiTs });
       } finally {
