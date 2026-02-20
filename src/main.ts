@@ -24,7 +24,7 @@ const els = {
   messageInput: document.getElementById('messageInput') as HTMLInputElement,
   askAiBtn: document.getElementById('askAiBtn') as HTMLButtonElement,
   presence: document.getElementById('presence') as HTMLDivElement,
-  cursorCanvas: document.getElementById('cursorCanvas') as HTMLCanvasElement,
+  overlayCanvas: document.getElementById('overlayCanvas') as HTMLCanvasElement,
 };
 
 const env = loadEnv();
@@ -73,26 +73,28 @@ els.joinRoom.addEventListener('click', async () => {
 
     const presenceState: Record<string, any> = {};
     const dpr = window.devicePixelRatio || 1;
-    const ctx = els.cursorCanvas.getContext('2d')!;
-    function resize() { const rect = els.cursorCanvas.getBoundingClientRect(); els.cursorCanvas.width = rect.width * dpr; els.cursorCanvas.height = rect.height * dpr; }
-    resize(); new (window as any).ResizeObserver(resize).observe(els.cursorCanvas);
+    const overlayCtx = els.overlayCanvas.getContext('2d')!;
+    function resizeOverlay() { els.overlayCanvas.width = Math.max(1, Math.floor(window.innerWidth * dpr)); els.overlayCanvas.height = Math.max(1, Math.floor(window.innerHeight * dpr)); }
+    resizeOverlay();
+    window.addEventListener('resize', resizeOverlay);
     function draw() {
-      ctx.clearRect(0, 0, els.cursorCanvas.width, els.cursorCanvas.height);
+      overlayCtx.clearRect(0, 0, els.overlayCanvas.width, els.overlayCanvas.height);
       for (const id in presenceState) {
         const p = presenceState[id]; if (!p) continue;
-        const x = p.x * els.cursorCanvas.width; const y = p.y * els.cursorCanvas.height;
-        ctx.fillStyle = p.color || '#22c55e'; ctx.beginPath(); ctx.arc(x, y, 6 * dpr, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = '#fff'; ctx.font = `${12 * dpr}px system-ui`; ctx.fillText(p.name || id, x + 8 * dpr, y - 8 * dpr);
-        if (p.typing) { ctx.fillStyle = '#94a3b8'; ctx.fillText(String(p.typing).slice(0, 24), x + 8 * dpr, y + 10 * dpr); }
+        // Map normalized viewport coords to overlay canvas
+        const x = p.x * els.overlayCanvas.width;
+        const y = p.y * els.overlayCanvas.height;
+        overlayCtx.fillStyle = p.color || '#22c55e'; overlayCtx.beginPath(); overlayCtx.arc(x, y, 6 * dpr, 0, Math.PI * 2); overlayCtx.fill();
+        overlayCtx.fillStyle = '#fff'; overlayCtx.font = `${12 * dpr}px system-ui`; overlayCtx.fillText(p.name || id, x + 8 * dpr, y - 8 * dpr);
+        if (p.typing) { overlayCtx.fillStyle = '#94a3b8'; overlayCtx.fillText(String(p.typing).slice(0, 24), x + 8 * dpr, y + 10 * dpr); }
       }
       requestAnimationFrame(draw);
     }
     requestAnimationFrame(draw);
 
     document.addEventListener('pointermove', (e) => {
-      const rect = els.cursorCanvas.getBoundingClientRect();
-      const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-      const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+      const x = Math.max(0, Math.min(1, e.clientX / window.innerWidth));
+      const y = Math.max(0, Math.min(1, e.clientY / window.innerHeight));
       const id = p2p.meId; presenceState[id] = presenceState[id] || { name: cfg.profile.name, color: cfg.profile.color, typing: '' };
       presenceState[id] = { ...presenceState[id], x, y }; p2p.broadcastPresence({ ...presenceState[id] });
     });
@@ -174,10 +176,31 @@ els.joinRoom.addEventListener('click', async () => {
     // 初回キックオフ: 履歴が空なら自動でプランニング開始
     const initial = await getMessages(roomId);
     if (!initial || initial.length === 0) {
-      // 軽いトースト代わりにステータス表示
-      els.roomStatus.textContent = `Joined (P2P): ${roomId} — planning...`;
-      // 即座にAIにプランニングを開始してもらう（ユーザー発話なし）
-      runAskAI('');
+      // 起動時はプロンプトは読まず、サンプルの質問リストを提示
+      const sample = [
+        'プランニングを始めましょう。以下の質問に答えてください。',
+        '- 1) プロジェクトの目的（達成したい価値）は？',
+        '- 2) 主要なユーザー/ステークホルダーは誰？',
+        '- 3) 想定ユースケース（3〜5件）を挙げてください。',
+        '- 4) 優先すべきユースケースはどれ？理由は？',
+        '- 5) 成功指標（KPI/KSF）は？',
+        '- 6) 既存の制約（技術/運用/法務/スケジュール）は？',
+        '- 7) 対象プラットフォーム/環境（Web/モバイル/CLI 等）は？',
+        '- 8) 依存サービスや外部APIは？',
+        '- 9) データ保存/同期の方針は？',
+        '- 10) セキュリティ/認可要件は？',
+        '- 11) 非機能要件（性能/可用性/監視）は？',
+        '- 12) 既知のリスク/ブロッカーは？',
+        '- 13) 今週のスコープ（何を終える？）は？',
+        '- 14) タスク分解（30–120分粒度）を列挙してください。',
+        '- 15) 依存関係/順序関係は？',
+        '- 16) 見積（S/M/L など）と優先度は？',
+        '- 17) 今日取り掛かる最小ステップは？',
+        '- 18) 不明点/要確認事項は？',
+        '- 19) コミュニケーション/レビューの頻度は？',
+        '- 20) 想定される完成イメージ（簡潔に）を言語化してください。'
+      ].join('\n');
+      p2p.sendMessage({ role: 'assistant', author: 'AI', ts: Date.now(), content: sample });
     }
     // Join 完了後はボタン無効化（重複Joinでの重複表示防止）
     els.joinRoom.disabled = true;
