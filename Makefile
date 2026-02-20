@@ -1,11 +1,12 @@
-.PHONY: help setup run build preview clean
+.PHONY: help setup run build preview clean e2e
 
-help:
+	help:
 	@echo "Common targets:"
 	@echo "  make setup    - Install npm dependencies"
 	@echo "  make run      - Start Vite dev server"
 	@echo "  make build    - Build production bundle"
 	@echo "  make preview  - Preview built files"
+	@echo "  make e2e      - Run Playwright E2E tests"
 	@echo "  make clean    - Remove node_modules and dist"
 
 setup:
@@ -21,6 +22,10 @@ build:
 
 preview:
 	@npm run preview
+
+e2e:
+	# Requires @playwright/test in devDependencies (or use: npx playwright test)
+	@npm run test:e2e || npx playwright test
 
 clean:
 	@rm -rf node_modules dist

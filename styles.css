@@ -20,7 +20,12 @@ button:hover { border-color: var(--accent); }
 .msg.me { border-color: #2563eb; }
 .msg.ai { border-color: var(--accent); }
 .msg-head { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
-.msg-content { font-size: 14px; line-height: 1.6; }
+.msg-content { font-size: 14px; line-height: 1.6; white-space: pre-wrap; }
+/* Removed line-number gutter and inline review UI */
+
+.actions { display: flex; gap: 8px; justify-content: flex-end; }
+.btn { background: #111827; color: var(--fg); border: 1px solid #334155; padding: 6px 10px; border-radius: 6px; cursor: pointer; }
+.btn:hover { border-color: var(--accent); }
 
 /* Minimal prose styles for Markdown */
 .prose p { margin: 0 0 0.6em; }
@@ -38,3 +43,4 @@ dialog { border:1px solid #334155; background:#0b1329; color:var(--fg); border-r
 .settings fieldset { border:1px solid #1f2937; border-radius:10px; padding:10px; }
 .settings textarea, .settings input { width: 100%; background:#0b1329; color:var(--fg); border:1px solid #1f2937; padding:6px 8px; border-radius:6px; }
 #presence { padding: 6px 10px; color: var(--muted); font-size: 12px; border-bottom: 1px solid #1f2937; height: 28px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+/* inline review widgets removed */

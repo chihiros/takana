@@ -1,8 +1,28 @@
+# Dependencies
 node_modules/
+
+# Build output
+dist/
+
+# Local env files (keep .env.example committed)
 .env
 .env.local
 .env.*.local
+
+# Logs and temp
+*.log
+.vite-dev.log
+.vite-dev.pid
+
+# Test artifacts
+coverage/
+playwright-report/
+test-results/
+
+# Editors/OS
+.DS_Store
+.idea/
+.vscode/
+
+# Vendor assets cache
 public/vendor/
-.env
-.env.local
-.env.*.local

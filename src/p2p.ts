@@ -29,6 +29,8 @@ export async function joinP2PRoom(
     onMessage?: (m: any) => void;
     onSync?: (msgs: any[]) => void;
     onPeers?: (n: number) => void;
+    onReview?: (r: any) => void;
+    onApply?: (p: any) => void;
   }
 ) {
   const P2PT = await loadP2PT();
@@ -60,6 +62,12 @@ export async function joinP2PRoom(
           presence[obj.id] = obj.data; handlers?.onPresence?.(presence); break;
         case 'chat':
           messages.push(obj.message); handlers?.onMessage?.(obj.message); break;
+        case 'review':
+          handlers?.onReview?.(obj.review);
+          break;
+        case 'apply':
+          handlers?.onApply?.(obj.patch);
+          break;
         case 'sync':
           presence = { ...presence, ...obj.presence };
           messages = [...messages, ...(obj.messages || [])].slice(-200);
@@ -78,6 +86,12 @@ export async function joinP2PRoom(
     },
     async sendMessage(message: any) {
       messages.push(message); await sendAll({ t: 'chat', message }); handlers?.onMessage?.(message);
+    },
+    async sendReview(review: any) {
+      await sendAll({ t: 'review', review }); handlers?.onReview?.(review);
+    },
+    async applyPatch(patch: any) {
+      await sendAll({ t: 'apply', patch }); handlers?.onApply?.(patch);
     },
   };
 }

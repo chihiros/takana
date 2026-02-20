@@ -1,7 +1,6 @@
 import { loadEnv, saveSettings } from './config';
 import { joinP2PRoom } from './p2p';
 import { getMessages, addMessage, addMessages } from './storage';
-import { renderMarkdown } from './markdown';
 import { getDefaultPrompt } from './prompts';
 
 const els = {
@@ -22,12 +21,20 @@ const els = {
   composer: document.getElementById('composer') as HTMLFormElement,
   sendBtn: document.getElementById('sendBtn') as HTMLButtonElement,
   messageInput: document.getElementById('messageInput') as HTMLInputElement,
-  askAiBtn: document.getElementById('askAiBtn') as HTMLButtonElement,
   presence: document.getElementById('presence') as HTMLDivElement,
   overlayCanvas: document.getElementById('overlayCanvas') as HTMLCanvasElement,
 };
 
 const env = loadEnv();
+// Query params: allow specifying roomId via ?room= or ?roomId=
+try {
+  const url = new URL(window.location.href);
+  const qRoom = (url.searchParams.get('room') || url.searchParams.get('roomId') || '').trim();
+  if (qRoom) {
+    const input = document.getElementById('roomId') as HTMLInputElement | null;
+    if (input) input.value = qRoom;
+  }
+} catch {}
 els.displayName.value = env.profile?.name || 'guest';
 els.color.value = env.profile?.color || '#22c55e';
 els.aiApiKey.value = env.AI_API_KEY || '';
@@ -68,8 +75,12 @@ els.joinRoom.addEventListener('click', async () => {
     const p2p = await joinP2PRoom(roomId, roomPassword, cfg.profile, {
       onPresence(snapshot) { const list = Object.values(snapshot || {}).map((p: any) => `${(p as any).name}`).join(', '); els.presence.textContent = list ? `Online: ${list}` : 'Online: —'; Object.assign(presenceState, snapshot || {}); },
       onMessage(m) { appendChat([m]); addMessage(roomId, m); },
-      onSync(msgs) { appendChat(msgs); addMessages(roomId, msgs); }
+      onSync(msgs) { appendChat(msgs); addMessages(roomId, msgs); },
+      onReview(_r) { /* reviews disabled */ },
+      onApply(_p) { /* apply disabled */ },
     });
+
+    // rebuildAssistant removed (comments/line numbers disabled)
 
     const presenceState: Record<string, any> = {};
     const dpr = window.devicePixelRatio || 1;
@@ -106,72 +117,188 @@ els.joinRoom.addEventListener('click', async () => {
     const seen = new Set<string>();
     function msgKey(m: any) { const role = m.role || ''; const author = m.author || ''; const ts = m.ts || 0; const c = String(m.content || ''); return `${role}|${author}|${ts}|${c.length}|${hash32(c)}`; }
     function markSeen(m: any) { seen.add(msgKey(m)); }
+    // removed: messageState, reviews, rangeReviews
     function appendChat(items: any[] | any) {
       if (!Array.isArray(items)) items = [items];
       const filtered = (items as any[]).filter(m => { const k = msgKey(m); if (seen.has(k)) return false; seen.add(k); return true; });
       if (!filtered.length) return;
       for (const m of filtered) {
         const wrap = document.createElement('div');
-        wrap.className = `msg ${m.role === 'assistant' ? 'ai' : m.role === 'user' ? 'me' : ''}`;
+        const isAssistant = (m.role || '') === 'assistant';
+        const isUser = (m.role || '') === 'user';
+        const isMe = isUser && String(m.author || '') === String(cfg.profile?.name || '');
+        wrap.className = 'msg';
+        if (isAssistant) wrap.classList.add('ai');
+        if (isMe) wrap.classList.add('me');
         const head = document.createElement('div'); head.className = 'msg-head';
         const who = document.createElement('strong'); who.textContent = String(m.author || m.role || '');
         head.appendChild(who);
-        const body = document.createElement('div');
-        body.className = `msg-content${m.role === 'assistant' ? ' prose' : ''}`;
         const content = String(m.content || '');
-        if (m.role === 'assistant') {
-          body.innerHTML = renderMarkdown(content);
-        } else {
-          body.textContent = content;
-        }
+        const mid = (m as any).mid || `${m.author||''}:${m.ts||Date.now()}:${hash32(content)}`;
+        (wrap as HTMLElement).setAttribute('data-mid', mid);
+        const body = document.createElement('div'); body.className = 'msg-content'; body.textContent = content;
         wrap.appendChild(head); wrap.appendChild(body);
         els.chat.appendChild(wrap);
       }
       els.chat.scrollTop = els.chat.scrollHeight;
     }
 
+    function updateGutterMarks(mid: string) {
+      const wrap = els.chat.querySelector(`[data-mid="${CSS.escape(mid)}"]`) as HTMLElement | null;
+      if (!wrap) return;
+      const map = reviews.get(mid);
+      const rlist = (rangeReviews.get(mid) || []) as any[];
+      const gutter = wrap.querySelector('.msg-gutter'); if (!gutter) return;
+      gutter.querySelectorAll('.line').forEach(el => {
+        const idx = Number((el as HTMLElement).getAttribute('data-line') || '0');
+        const hasSingle = map && map.has(idx);
+        const hasRange = rlist.some(r => idx >= (r.start ?? r.line) && idx <= (r.end ?? r.line));
+        if (hasSingle || hasRange) el.classList.add('has-review'); else el.classList.remove('has-review');
+      });
+    }
+
+    function renderThread(mid: string, line: number, panel: HTMLElement) {
+      panel.innerHTML = '';
+      const title = document.createElement('h4'); title.textContent = `Line ${line + 1} — Reviews`;
+      const list = document.createElement('div'); list.className = 'review-comments';
+      const arr = (reviews.get(mid)?.get(line)) || [];
+      for (const r of arr) {
+        const item = document.createElement('div'); item.className = 'review-comment';
+        const head = document.createElement('div'); head.innerHTML = `<strong>${escapeHtml(r.author || 'user')}</strong> · ${new Date(r.ts||Date.now()).toLocaleString()}`;
+        const body = document.createElement('div'); body.textContent = String(r.comment || '');
+        item.appendChild(head); item.appendChild(body);
+        if (r.replacement) {
+          const pre = document.createElement('pre'); const code = document.createElement('code'); code.textContent = String(r.replacement); pre.appendChild(code); item.appendChild(pre);
+          const applyBtn = document.createElement('button'); applyBtn.className = 'btn'; applyBtn.textContent = 'Apply this change';
+          applyBtn.addEventListener('click', () => {
+            const patch = { target: mid, line, replacement: String(r.replacement || ''), author: env.profile?.name || 'guest', ts: Date.now() };
+            p2p.applyPatch(patch);
+          });
+          item.appendChild(applyBtn);
+        }
+        list.appendChild(item);
+      }
+      const form = document.createElement('div'); form.className = 'review-form';
+      const ta = document.createElement('textarea'); ta.rows = 3; ta.placeholder = 'コメントを追加…';
+      const repl = document.createElement('input'); repl.placeholder = '置換案（任意）';
+      const actions = document.createElement('div'); actions.className = 'actions';
+      const addBtn = document.createElement('button'); addBtn.className = 'btn'; addBtn.textContent = 'Comment';
+      const applyBtn = document.createElement('button'); applyBtn.className = 'btn'; applyBtn.textContent = 'Apply replacement';
+      addBtn.addEventListener('click', () => { const comment = ta.value.trim(); if (!comment) return; const review = { id: crypto.randomUUID(), target: mid, line, comment, replacement: '', author: env.profile?.name || 'guest', ts: Date.now() }; p2p.sendReview(review); ta.value=''; });
+      applyBtn.addEventListener('click', () => { const replacement = repl.value; const review = { id: crypto.randomUUID(), target: mid, line, comment: ta.value.trim(), replacement, author: env.profile?.name || 'guest', ts: Date.now() }; p2p.sendReview(review); const patch = { target: mid, line, replacement, author: env.profile?.name || 'guest', ts: Date.now() }; p2p.applyPatch(patch); ta.value=''; repl.value=''; });
+      actions.appendChild(addBtn); actions.appendChild(applyBtn);
+      form.appendChild(ta); form.appendChild(repl); form.appendChild(actions);
+      panel.appendChild(title); panel.appendChild(list); panel.appendChild(form);
+    }
+
+    // Range selection & inline editor helpers
+    function attachRangeHandlers(msgWrap: HTMLElement, gutter: HTMLElement, mid: string, lineEl: HTMLElement) {
+      let dragging = false; let start = 0; let last = 0;
+      const onMouseUp = () => {
+        if (!dragging) return; dragging = false;
+        const sel = getSelectedRange(gutter); clearSelected(gutter);
+        if (!sel) return; const [s,e] = sel; openInlineEditor(msgWrap, mid, s, e);
+        document.removeEventListener('mouseup', onMouseUp);
+      };
+      lineEl.addEventListener('mousedown', (e) => {
+        e.preventDefault(); dragging = true; start = Number(lineEl.getAttribute('data-line')) || 0; last = start;
+        updateSelectedRange(gutter, start, start);
+        document.addEventListener('mouseup', onMouseUp);
+      });
+      lineEl.addEventListener('mouseenter', () => {
+        if (!dragging) return; const cur = Number(lineEl.getAttribute('data-line')) || 0; if (cur !== last) { last = cur; updateSelectedRange(gutter, start, cur); }
+      });
+      lineEl.addEventListener('click', () => { if (!dragging) openInlineEditor(msgWrap, mid, Number(lineEl.getAttribute('data-line'))||0, Number(lineEl.getAttribute('data-line'))||0); });
+    }
+    function updateSelectedRange(gutter: HTMLElement, a: number, b: number) { clearSelected(gutter); const s = Math.min(a,b), e = Math.max(a,b); for (let i=s;i<=e;i++){ const el = gutter.querySelector(`.line[data-line="${i}"]`) as HTMLElement | null; if (el) el.classList.add('selected'); } }
+    function clearSelected(gutter: HTMLElement) { gutter.querySelectorAll('.line.selected').forEach(n => n.classList.remove('selected')); }
+    function getSelectedRange(gutter: HTMLElement): [number,number] | null { const nodes = Array.from(gutter.querySelectorAll('.line.selected')) as HTMLElement[]; if (!nodes.length) return null; const idxs = nodes.map(n => Number(n.getAttribute('data-line'))||0); return [Math.min(...idxs), Math.max(...idxs)]; }
+    function openInlineEditor(msgWrap: HTMLElement, mid: string, start: number, end: number) {
+      const bodyWrap = msgWrap.querySelector('.msg-body') as HTMLElement | null; const gutter = msgWrap.querySelector('.msg-gutter') as HTMLElement | null; if (!bodyWrap || !gutter) return;
+      const endLine = gutter.querySelector(`.line[data-line="${end}"]`) as HTMLElement | null; if (!endLine) return;
+      const bodyRect = bodyWrap.getBoundingClientRect(); const gutterRect = gutter.getBoundingClientRect(); const lineRect = endLine.getBoundingClientRect();
+      let inline = bodyWrap.querySelector(`.inline-review[data-range="${start}-${end}"]`) as HTMLElement | null;
+      if (!inline) { inline = document.createElement('div'); inline.className = 'inline-review'; inline.setAttribute('data-range', `${start}-${end}`); bodyWrap.appendChild(inline); }
+      const left = gutterRect.right - bodyRect.left + 8; const top = lineRect.bottom - bodyRect.top + 4;
+      inline.style.left = `${Math.max(0, left)}px`; inline.style.top = `${Math.max(0, top)}px`;
+      inline.style.width = `${Math.max(200, bodyRect.width - left - 12)}px`;
+      renderThreadRange(mid, start, end, inline);
+    }
+    function renderThreadRange(mid: string, start: number, end: number, container: HTMLElement) {
+      container.innerHTML = '';
+      const title = document.createElement('div'); title.className = 'hdr'; title.textContent = `Review · L${start + 1}${end !== start ? `–L${end + 1}` : ''}`;
+      const list = document.createElement('div'); list.className = 'review-comments';
+      const all = (rangeReviews.get(mid) || []) as any[];
+      const arr = all.filter(r => (r.start ?? r.line) === start && (r.end ?? r.line) === end);
+      for (const r of arr) {
+        const item = document.createElement('div'); item.className = 'review-comment';
+        const head = document.createElement('div'); head.innerHTML = `<strong>${escapeHtml(r.author || 'user')}</strong> · ${new Date(r.ts||Date.now()).toLocaleString()}`;
+        const body = document.createElement('div'); body.textContent = String(r.comment || '');
+        item.appendChild(head); item.appendChild(body);
+        if (r.replacement) {
+          const pre = document.createElement('pre'); const code = document.createElement('code'); code.textContent = String(r.replacement); pre.appendChild(code); item.appendChild(pre);
+          const applyBtn = document.createElement('button'); applyBtn.className = 'btn'; applyBtn.textContent = 'Apply this change';
+          applyBtn.addEventListener('click', () => { const patch = { target: mid, start, end, replacement: String(r.replacement||''), author: env.profile?.name || 'guest', ts: Date.now() }; p2p.applyPatch(patch); });
+          item.appendChild(applyBtn);
+        }
+        list.appendChild(item);
+      }
+      const form = document.createElement('div'); form.className = 'review-form';
+      const ta = document.createElement('textarea'); ta.rows = 3; ta.placeholder = 'コメントを追加…';
+      const repl = document.createElement('input'); repl.placeholder = '置換案（任意、複数行可）';
+      const actions = document.createElement('div'); actions.className = 'actions';
+      const addBtn = document.createElement('button'); addBtn.className = 'btn'; addBtn.textContent = 'Comment';
+      const applyBtn = document.createElement('button'); applyBtn.className = 'btn'; applyBtn.textContent = 'Apply replacement';
+      addBtn.addEventListener('click', () => { const comment = ta.value.trim(); if (!comment) return; const review = { id: crypto.randomUUID(), target: mid, start, end, comment, replacement: '', author: env.profile?.name || 'guest', ts: Date.now() }; p2p.sendReview(review); ta.value=''; });
+      applyBtn.addEventListener('click', () => { const replacement = repl.value; const review = { id: crypto.randomUUID(), target: mid, start, end, comment: ta.value.trim(), replacement, author: env.profile?.name || 'guest', ts: Date.now() }; p2p.sendReview(review); const patch = { target: mid, start, end, replacement, author: env.profile?.name || 'guest', ts: Date.now() }; p2p.applyPatch(patch); ta.value=''; repl.value=''; });
+      actions.appendChild(addBtn); actions.appendChild(applyBtn);
+      form.appendChild(ta); form.appendChild(repl); form.appendChild(actions);
+      container.appendChild(title); container.appendChild(list); container.appendChild(form);
+    }
+
     els.composer.addEventListener('submit', async (e) => {
       e.preventDefault();
       const text = els.messageInput.value.trim(); if (!text) return;
-      const userTs = Date.now();
-      const msg = { role: 'user', content: text, author: cfg.profile.name, ts: userTs };
-      p2p.sendMessage(msg);
       els.messageInput.value = '';
       const id = p2p.meId; presenceState[id] = presenceState[id] || { name: cfg.profile.name, color: cfg.profile.color, typing: '' };
       presenceState[id] = { ...presenceState[id], typing: '' }; p2p.broadcastPresence({ ...presenceState[id] });
-      await runAskAI(text);
-    });
-
-    els.askAiBtn.addEventListener('click', async () => {
-      try { await runAskAI(els.messageInput.value.trim()); } catch (err: any) { alert(`AI error: ${err.message}`); }
+      // 自分のユーザーメッセージを即時表示・保存・配信
+      const userTs = Date.now();
+      const userMid = crypto.randomUUID();
+      const userMsg = { role: 'user', author: cfg.profile?.name || 'guest', ts: userTs, content: text, mid: userMid };
+      appendChat([userMsg]);
+      markSeen(userMsg);
+      addMessage(roomId, userMsg);
+      p2p.sendMessage(userMsg);
+      await runAskAI();
     });
 
     async function runAskAI(optionalTyped?: string) {
-      els.askAiBtn.disabled = true; if (els.sendBtn) els.sendBtn.disabled = true;
+      if (els.sendBtn) els.sendBtn.disabled = true;
       try {
         const history = (await getMessages(roomId)).map((m: any) => ({ role: m.role || 'user', content: m.content || '' }));
-        if (optionalTyped && (history.length === 0 || history[history.length - 1].role !== 'user')) history.push({ role: 'user', content: optionalTyped });
+        // 送信済みのユーザーメッセージは履歴に保存済みのため、ここでは追加しない
         const msgEl = document.createElement('div'); msgEl.className = 'msg ai';
+        const aiMid = crypto.randomUUID();
+        (msgEl as HTMLElement).setAttribute('data-mid', aiMid);
         const head = document.createElement('div'); head.className = 'msg-head';
         const strong = document.createElement('strong'); strong.textContent = 'AI'; head.appendChild(strong);
-        const span = document.createElement('div'); span.className = 'msg-content prose';
-        msgEl.appendChild(head); msgEl.appendChild(span);
+        const body = document.createElement('div'); body.className = 'msg-content';
+        msgEl.appendChild(head); msgEl.appendChild(body);
         els.chat.appendChild(msgEl); els.chat.scrollTop = els.chat.scrollHeight;
 
         const aiTs = Date.now(); let full = '';
         try {
           const { askAIStream } = await import('./ai');
-          full = await askAIStream(history, { onDelta(delta) { full += delta; (span as HTMLElement).innerText = full; els.chat.scrollTop = els.chat.scrollHeight; }, system: getDefaultPrompt()?.body });
+          full = await askAIStream(history, { onDelta(delta) { full += delta; (body as HTMLElement).innerText = full; els.chat.scrollTop = els.chat.scrollHeight; }, system: getDefaultPrompt()?.body });
         } catch {
           const { askAI } = await import('./ai');
-          full = await askAI(history, { system: getDefaultPrompt()?.body }); (span as HTMLElement).innerText = full; els.chat.scrollTop = els.chat.scrollHeight;
+          full = await askAI(history, { system: getDefaultPrompt()?.body }); (body as HTMLElement).innerText = full; els.chat.scrollTop = els.chat.scrollHeight;
         }
-        (span as HTMLElement).innerHTML = renderMarkdown(full);
+        // keep plain text as-is (no line numbers or comments)
         markSeen({ role: 'assistant', author: 'AI', ts: aiTs, content: full });
-        p2p.sendMessage({ role: 'assistant', content: full, author: 'AI', ts: aiTs });
-      } finally {
-        els.askAiBtn.disabled = false; if (els.sendBtn) els.sendBtn.disabled = false;
-      }
+        p2p.sendMessage({ role: 'assistant', content: full, author: 'AI', ts: aiTs, mid: aiMid });
+      } finally { if (els.sendBtn) els.sendBtn.disabled = false; }
     }
     // 初回キックオフ: 履歴が空なら自動でプランニング開始
     const initial = await getMessages(roomId);
